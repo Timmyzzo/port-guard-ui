@@ -441,7 +441,7 @@ def validate_config(config):
         "cn_set": validate_ipset_name(config.get("cn_set", "cnblock")),
         "persist": bool(config.get("persist", True)),
         "drop_cn_fallback": bool(config.get("drop_cn_fallback", False)),
-        "block_cn_all_ports": bool(config.get("block_cn_all_ports", True)),
+        "block_cn_all_ports": bool(config.get("block_cn_all_ports", False)),
         "source_groups": source_groups,
         "rules": []
     }

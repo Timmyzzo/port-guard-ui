@@ -147,7 +147,7 @@ function ensureConfigShape(config) {
   const cfg = config || {};
   if (!Array.isArray(cfg.rules)) cfg.rules = [];
   cfg.drop_cn_fallback = Boolean(cfg.drop_cn_fallback);
-  cfg.block_cn_all_ports = cfg.block_cn_all_ports !== false;
+  cfg.block_cn_all_ports = Boolean(cfg.block_cn_all_ports);
 
   const incoming = Array.isArray(cfg.source_groups) ? cfg.source_groups : [];
   const merged = new Map(defaultGroups(cfg).map((group) => [group.id, { ...group, sources: [...(group.sources || [])] }]));
