@@ -59,7 +59,8 @@ ENV
 chmod 600 "$ENV_FILE"
 
 systemctl daemon-reload
-systemctl enable --now port-guard-ui
+systemctl enable port-guard-ui
+systemctl restart port-guard-ui
 
 SERVER_IP="$(curl -fsS --max-time 4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
 
