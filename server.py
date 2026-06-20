@@ -21,10 +21,12 @@ APP_DIR = Path(os.environ.get("PORT_GUARD_HOME", "/opt/port-guard-ui"))
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path(os.environ.get("PORT_GUARD_CONFIG_DIR", "/etc/port-guard-ui"))
 CONFIG_FILE = CONFIG_DIR / "config.json"
+AUTH_FILE = CONFIG_DIR / "auth.json"
 BACKUP_DIR = Path(os.environ.get("PORT_GUARD_BACKUP_DIR", "/var/backups/port-guard-ui"))
 TOKEN = os.environ.get("PORT_GUARD_TOKEN", "")
-SECRET = os.environ.get("PORT_GUARD_SECRET", TOKEN or "dev-secret")
-BIND = os.environ.get("PORT_GUARD_BIND", "127.0.0.1")
+SECRET = os.environ.get("PORT_GUARD_SECRET") or base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
+DEFAULT_PASSWORD = os.environ.get("PORT_GUARD_DEFAULT_PASSWORD", "admin")
+BIND = os.environ.get("PORT_GUARD_BIND", "0.0.0.0")
 PORT = int(os.environ.get("PORT_GUARD_PORT", "8787"))
 INIT_OPEN_LISTENING = os.environ.get("PORT_GUARD_INIT_OPEN_LISTENING", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -38,6 +40,10 @@ BACKUP_NAME_RE = re.compile(r"^iptables-(?:before-open-all-)?[0-9TZ]+\.rules$")
 REQUIRED_GROUP_ID = "internal"
 TEMP_OPEN_COMMENT = "PORTGUARD_TEMP_OPEN_ALL"
 SAFE_INPUT_PORTS_RAW = os.environ.get("PORT_GUARD_SAFE_INPUT_PORTS", "22222")
+AUTH_ITERATIONS = 260_000
+LOGIN_WINDOW_SECONDS = 60
+LOGIN_MAX_FAILURES = 5
+LOGIN_FAILURES = {}
 DEFAULT_SOURCE_GROUPS = [
     {
         "id": "internal",
@@ -95,6 +101,7 @@ def run(cmd, check=True, input_data=None):
 def ensure_dirs():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_auth_file()
     if not CONFIG_FILE.exists():
         config = initial_open_listening_config() if INIT_OPEN_LISTENING else DEFAULT_CONFIG
         if INIT_OPEN_LISTENING:
@@ -116,6 +123,62 @@ def write_json(path, data):
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def password_hash(password):
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, AUTH_ITERATIONS)
+    return {
+        "scheme": "pbkdf2_sha256",
+        "iterations": AUTH_ITERATIONS,
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "hash": base64.b64encode(digest).decode("ascii"),
+    }
+
+
+def verify_password(password, record):
+    try:
+        if record.get("scheme") != "pbkdf2_sha256":
+            return False
+        iterations = int(record.get("iterations", 0))
+        salt = base64.b64decode(record.get("salt", ""))
+        expected = base64.b64decode(record.get("hash", ""))
+        actual = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+
+def write_auth_password(password):
+    write_json(AUTH_FILE, {"schema": 1, "password": password_hash(password), "updated_at": int(time.time())})
+    try:
+        AUTH_FILE.chmod(0o600)
+    except OSError:
+        pass
+
+
+def ensure_auth_file():
+    if not AUTH_FILE.exists():
+        write_auth_password(DEFAULT_PASSWORD)
+
+
+def verify_login_password(password):
+    auth = read_json(AUTH_FILE, {})
+    if verify_password(password, auth.get("password", {})):
+        return True
+    return bool(TOKEN and hmac.compare_digest(str(password), TOKEN))
+
+
+def change_login_password(current_password, new_password):
+    if not verify_login_password(current_password):
+        raise AppError("当前密码不正确", 401)
+    new_password = str(new_password or "")
+    if len(new_password) < 4:
+        raise AppError("新密码至少需要 4 个字符")
+    if len(new_password) > 256:
+        raise AppError("新密码过长")
+    write_auth_password(new_password)
+    return {"changed": True}
 
 
 def is_loopback_bind(host):
@@ -165,6 +228,26 @@ def json_body(handler):
         return json.loads(raw.decode("utf-8"))
     except json.JSONDecodeError as exc:
         raise AppError(f"invalid JSON: {exc}", 400)
+
+
+def login_lock_seconds(ip):
+    now = time.time()
+    attempts = [item for item in LOGIN_FAILURES.get(ip, []) if now - item < LOGIN_WINDOW_SECONDS]
+    LOGIN_FAILURES[ip] = attempts
+    if len(attempts) >= LOGIN_MAX_FAILURES:
+        return max(1, int(LOGIN_WINDOW_SECONDS - (now - attempts[0])))
+    return 0
+
+
+def record_login_failure(ip):
+    now = time.time()
+    attempts = [item for item in LOGIN_FAILURES.get(ip, []) if now - item < LOGIN_WINDOW_SECONDS]
+    attempts.append(now)
+    LOGIN_FAILURES[ip] = attempts
+
+
+def clear_login_failures(ip):
+    LOGIN_FAILURES.pop(ip, None)
 
 
 def validate_ipset_name(name):
@@ -497,6 +580,8 @@ def initial_open_listening_config():
 
     for row in docker_port_mappings():
         add_port(row.get("host_port"), row.get("proto"), docker=True)
+
+    add_port(PORT, "tcp")
 
     rules = []
     for port in sorted(ports):
@@ -891,9 +976,10 @@ class Handler(BaseHTTPRequestHandler):
     def send_error_json(self, message, status=400):
         self.send_json({"ok": False, "error": message}, status)
 
+    def client_ip(self):
+        return self.client_address[0] if self.client_address else "unknown"
+
     def authenticated(self):
-        if not TOKEN:
-            return True
         cookies = parse_cookie(self.headers.get("Cookie", ""))
         return verify_session(cookies.get("pg_session", ""))
 
@@ -925,18 +1011,27 @@ class Handler(BaseHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             if parsed.path == "/api/login":
+                ip = self.client_ip()
+                locked = login_lock_seconds(ip)
+                if locked:
+                    raise AppError(f"尝试次数过多，请 {locked} 秒后再试", 429)
                 data = json_body(self)
-                token = str(data.get("token", ""))
-                if not TOKEN or hmac.compare_digest(token, TOKEN):
+                password = str(data.get("password", data.get("token", "")))
+                if verify_login_password(password):
+                    clear_login_failures(ip)
                     expiry = int(time.time()) + 8 * 3600
                     cookie = f"pg_session={sign_session(expiry)}; HttpOnly; SameSite=Strict; Path=/; Max-Age={8 * 3600}"
                     self.send_json({"ok": True}, headers={"Set-Cookie": cookie})
                     return
-                raise AppError("invalid token", 401)
+                record_login_failure(ip)
+                raise AppError("密码错误", 401)
             self.require_auth()
             data = json_body(self)
             if parsed.path == "/api/logout":
                 self.send_json({"ok": True}, headers={"Set-Cookie": "pg_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
+            elif parsed.path == "/api/password":
+                result = change_login_password(data.get("current_password", ""), data.get("new_password", ""))
+                self.send_json({"ok": True, "data": result})
             elif parsed.path == "/api/config":
                 config = validate_config(data.get("config", data))
                 write_json(CONFIG_FILE, config)
@@ -1002,8 +1097,6 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     if os.geteuid() != 0:
         raise SystemExit("port-guard-ui must run as root to manage iptables")
-    if not TOKEN and not is_loopback_bind(BIND):
-        raise SystemExit("PORT_GUARD_TOKEN is required when binding outside loopback")
     ensure_dirs()
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     print(f"Port Guard UI listening on http://{BIND}:{PORT}")

@@ -313,8 +313,8 @@ async function loadPreview() {
   });
 }
 
-async function login(token) {
-  await api("/api/login", { method: "POST", body: JSON.stringify({ token }) });
+async function login(password) {
+  await api("/api/login", { method: "POST", body: JSON.stringify({ password }) });
   await load();
 }
 
@@ -323,9 +323,9 @@ function renderLogin(error = "") {
     <main class="login">
       <form class="login-box" id="loginForm">
         <h1>Port Guard</h1>
-        <p class="muted">通过 SSH 隧道访问服务器本地防火墙面板。</p>
-        <label>访问令牌</label>
-        <input id="loginToken" type="password" autocomplete="current-password" autofocus />
+        <p class="muted">默认密码为 admin，登录后请在设置中修改。</p>
+        <label>登录密码</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" autofocus />
         ${error ? `<p class="error-text">${escapeHtml(error)}</p>` : ""}
         <div class="actions" style="margin-top:14px">
           <button class="primary" type="submit">进入面板</button>
@@ -336,7 +336,7 @@ function renderLogin(error = "") {
   document.getElementById("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await login(document.getElementById("loginToken").value);
+      await login(document.getElementById("loginPassword").value);
     } catch (err) {
       renderLogin(err.message);
     }
@@ -689,6 +689,26 @@ function renderSettingsView() {
         <label class="check-row"><input id="dropCnFallback" type="checkbox" ${cfg.drop_cn_fallback ? "checked" : ""} /> 未匹配来源兜底禁止 CN</label>
       </div>
     </section>
+    <section class="panel settings-panel">
+      <div class="section-title">
+        <div><strong>登录密码</strong><p class="muted">用于公网访问面板的管理密码。</p></div>
+      </div>
+      <div class="password-grid">
+        <div>
+          <label>当前密码</label>
+          <input id="currentPassword" type="password" autocomplete="current-password" />
+        </div>
+        <div>
+          <label>新密码</label>
+          <input id="newPassword" type="password" autocomplete="new-password" />
+        </div>
+        <div>
+          <label>确认新密码</label>
+          <input id="confirmPassword" type="password" autocomplete="new-password" />
+        </div>
+        <button class="primary" id="changePasswordBtn" type="button">修改密码</button>
+      </div>
+    </section>
   `;
 }
 
@@ -926,6 +946,7 @@ function bindEvents() {
   });
   document.getElementById("updateCnBtn")?.addEventListener("click", updateCn);
   document.getElementById("clearRestrictionsBtn")?.addEventListener("click", clearRestrictions);
+  document.getElementById("changePasswordBtn")?.addEventListener("click", changePassword);
   document.getElementById("saveGroupsBtn")?.addEventListener("click", saveConfig);
   document.getElementById("applyGroupsBtn")?.addEventListener("click", applyFirewall);
   document.getElementById("addSourceGroupBtn")?.addEventListener("click", () => {
@@ -1043,6 +1064,33 @@ async function clearRestrictions() {
     state.config = ensureConfigShape(data.config);
     toast(`已清空所有限制，回滚点 ${data.result.backup}`);
     await load();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function changePassword() {
+  try {
+    const current = document.getElementById("currentPassword")?.value || "";
+    const next = document.getElementById("newPassword")?.value || "";
+    const confirm = document.getElementById("confirmPassword")?.value || "";
+    if (next !== confirm) {
+      toast("两次输入的新密码不一致。");
+      return;
+    }
+    if (next.length < 4) {
+      toast("新密码至少需要 4 个字符。");
+      return;
+    }
+    await api("/api/password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: current, new_password: next }),
+    });
+    ["currentPassword", "newPassword", "confirmPassword"].forEach((id) => {
+      const input = document.getElementById(id);
+      if (input) input.value = "";
+    });
+    toast("登录密码已修改。");
   } catch (err) {
     toast(err.message);
   }

@@ -680,6 +680,13 @@ label {
   align-items: start;
 }
 
+.password-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
 .settings-topline {
   display: flex;
   align-items: center;
@@ -848,6 +855,7 @@ pre {
   .topbar,
   .toolbar,
   .settings-grid,
+  .password-grid,
   .source-group,
   .split {
     grid-template-columns: 1fr;
