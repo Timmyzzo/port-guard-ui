@@ -1,5 +1,5 @@
 ﻿[Unit]
-Description=Port Guard UI
+Description=Port Guard
 After=network-online.target docker.service
 Wants=network-online.target
 

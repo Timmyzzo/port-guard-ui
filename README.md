@@ -1,6 +1,6 @@
 <div align="center">
 
-# Port Guard UI
+# Port Guard
 
 **Linux 服务器端口防火墙可视化管理面板**
 
@@ -9,15 +9,45 @@
 ![Docker](https://img.shields.io/badge/Docker-%E7%AB%AF%E5%8F%A3%E8%AF%86%E5%88%AB-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![No Build](https://img.shields.io/badge/%E5%89%8D%E7%AB%AF-%E6%97%A0%E9%9C%80%E6%9E%84%E5%BB%BA-6B7280?style=flat-square)
 
-一个轻量、直观、开箱即用的服务器端口管理面板。
+一个轻量、直观、开箱即用的服务器端口管理面板。扫描当前端口，托管访问策略，减少手写 iptables 规则的重复劳动。
 
 </div>
 
 ---
 
+## 界面预览
+
+### 端口策略
+
+自动识别宿主机监听端口和 Docker 发布端口，可直接设置开放、限制来源、黑名单、关闭等策略。
+
+![Port Guard 端口管理界面](docs/screenshots/port-guard-ports.png)
+
+### 设置与密码
+
+默认公网可访问，使用密码登录；设置页可修改密码、控制 CN 拦截和规则持久化。
+
+![Port Guard 设置界面](docs/screenshots/port-guard-settings.png)
+
+---
+
+## 适合场景
+
+Port Guard 适合这些常见服务器场景：
+
+| 场景 | 说明 |
+| --- | --- |
+| 个人 VPS | 快速查看哪些端口正在对外监听，并统一托管 |
+| Docker 主机 | 看清 Docker 发布端口，并把容器入口纳入策略 |
+| 多服务机器 | Web、API、面板、数据库、VPN 等端口集中管理 |
+| 临时放行 | 新服务上线后先全网开放，再按需要收紧来源 |
+| 低运维门槛 | 不需要手写复杂 iptables 命令 |
+
+---
+
 ## 默认行为
 
-Port Guard UI 默认面向公网使用，安装完成后直接打开：
+Port Guard 默认面向公网使用，安装完成后直接打开：
 
 ```text
 http://服务器IP:8787
@@ -57,7 +87,7 @@ curl -fsSL https://raw.githubusercontent.com/Timmyzzo/port-guard-ui/refs/heads/m
 安装脚本只考虑 Debian / Ubuntu 系统，会自动完成：
 
 - 安装 `python3`、`iptables`、`ipset`、`iproute2` 等依赖。
-- 下载并安装 Port Guard UI 到 `/opt/port-guard-ui`。
+- 下载并安装 Port Guard 到 `/opt/port-guard-ui`。
 - 写入 systemd 服务。
 - 默认监听公网 `8787` 端口。
 - 默认密码设置为 `admin`。
@@ -70,6 +100,24 @@ http://服务器IP:8787
 ```
 
 如果打不开，优先检查云厂商安全组是否放行 `8787/tcp`。
+
+---
+
+## 升级已有安装
+
+已经安装过旧版本时，仍然执行同一行命令即可：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Timmyzzo/port-guard-ui/refs/heads/main/install.sh | sudo bash
+```
+
+升级会覆盖程序文件并重启服务，但不会删除已有配置：
+
+| 保留内容 | 路径 |
+| --- | --- |
+| 端口策略配置 | `/etc/port-guard-ui/config.json` |
+| 登录密码 | `/etc/port-guard-ui/auth.json` |
+| 回滚备份 | `/var/backups/port-guard-ui` |
 
 ---
 
@@ -99,6 +147,19 @@ http://服务器IP:8787
 
 ---
 
+## 防火墙边界
+
+Port Guard 只管理自己的链，不会把整台机器的 iptables 清空。
+
+| 链 | 用途 |
+| --- | --- |
+| `PORTGUARD-INPUT` | 管理宿主机监听端口 |
+| `PORTGUARD-DOCKER` | 管理 Docker 发布端口 |
+
+首次安装时不会备份原有规则；后续你在面板中点击“应用到防火墙”时，会自动创建回滚点。
+
+---
+
 ## 常用策略
 
 | 模式 | 效果 |
@@ -108,6 +169,20 @@ http://服务器IP:8787
 | 禁止中国 IP | 丢弃中国大陆来源 IP，其他来源放行 |
 | 除黑名单外开放 | 默认开放，但拒绝黑名单来源 |
 | 仅本机/隧道 | 不开放公网直连 |
+
+---
+
+## 云安全组
+
+如果面板或业务端口打不开，通常不是 Port Guard 没启动，而是云厂商安全组没放行。
+
+至少需要放行：
+
+| 协议 | 端口 | 来源 |
+| --- | --- | --- |
+| TCP | `8787` | `0.0.0.0/0` |
+
+如果你希望服务器上的业务端口也都能公网访问，请在云控制台按需放行对应端口。
 
 ---
 
@@ -174,6 +249,19 @@ sudo iptables -S PORTGUARD-DOCKER
 
 ---
 
+## 卸载
+
+```bash
+sudo systemctl disable --now port-guard-ui
+sudo rm -f /etc/systemd/system/port-guard-ui.service
+sudo rm -rf /opt/port-guard-ui
+sudo systemctl daemon-reload
+```
+
+默认不会删除 `/etc/port-guard-ui` 和 `/var/backups/port-guard-ui`，避免误删配置和回滚点。确认不需要后可以手动删除。
+
+---
+
 ## 回滚
 
 后续在面板手动应用规则时会生成备份。如果需要从控制台、VNC 或救援模式回滚：
@@ -211,6 +299,10 @@ node --check static/app.js
 .
 ├── install.sh
 ├── server.py
+├── docs/
+│   └── screenshots/
+│       ├── port-guard-ports.png
+│       └── port-guard-settings.png
 ├── static/
 │   ├── app.js
 │   ├── index.html

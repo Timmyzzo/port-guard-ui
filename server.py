@@ -957,7 +957,7 @@ def app_status():
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "PortGuardUI/1.0"
+    server_version = "PortGuard/1.0"
 
     def log_message(self, fmt, *args):
         print(f"{self.address_string()} - {fmt % args}")
@@ -1096,10 +1096,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     if os.geteuid() != 0:
-        raise SystemExit("port-guard-ui must run as root to manage iptables")
+        raise SystemExit("Port Guard must run as root to manage iptables")
     ensure_dirs()
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
-    print(f"Port Guard UI listening on http://{BIND}:{PORT}")
+    print(f"Port Guard listening on http://{BIND}:{PORT}")
     httpd.serve_forever()
 
 

@@ -65,7 +65,7 @@ systemctl restart port-guard-ui
 SERVER_IP="$(curl -fsS --max-time 4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
 
 echo
-echo "Port Guard UI installed."
+echo "Port Guard installed."
 echo "URL: http://${SERVER_IP:-YOUR_SERVER_IP}:$PORT"
 echo "Default password: admin"
 echo "Change the password in Settings after login."
