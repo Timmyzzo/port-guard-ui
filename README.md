@@ -11,7 +11,7 @@
 
 一个轻量、直观、开箱即用的服务器端口管理面板。扫描当前端口，托管访问策略，减少手写 iptables 规则的重复劳动。
 
-[友情链接：LINUX DO](https://linux.do/)    [友情链接：nodeseek]([https://linux.do/](https://www.nodeseek.com/)) 
+[友情链接：LINUX DO](https://linux.do/)    [友情链接：nodeseek](https://www.nodeseek.com/)
 
 </div>
 
